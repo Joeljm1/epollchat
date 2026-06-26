@@ -1,0 +1,79 @@
+---
+# Clang-Format configuration file for Modern C++
+# Ref: https://clang.llvm.org/docs/ClangFormatStyleOptions.html
+
+BasedOnStyle: LLVM
+
+Language: Cpp
+Standard: Latest
+
+# General Layout
+ColumnLimit: 100
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+
+# Pointer/Reference alignment (left-aligned, e.g. int* ptr, int& ref)
+PointerAlignment: Left
+
+# Brace Wrapping (Attach style except for functions)
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterCaseLabel: false
+  AfterClass: false
+  AfterControlStatement: Never
+  AfterEnum: false
+  AfterFunction: true
+  AfterNamespace: false
+  AfterObjCDeclaration: false
+  AfterStruct: false
+  AfterUnion: false
+  AfterExternBlock: false
+  BeforeCatch: false
+  BeforeElse: false
+  BeforeLambdaBody: false
+  BeforeWhile: false
+  IndentBraces: false
+  SplitEmptyFunction: true
+  SplitEmptyRecord: true
+  SplitEmptyNamespace: true
+
+# Short statements
+AllowShortBlocksOnASingleLine: Never
+AllowShortCaseLabelsOnASingleLine: false
+AllowShortFunctionsOnASingleLine: None
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+
+# Spaces
+SpaceAfterCStyleCast: false
+SpaceAfterLogicalNot: false
+SpaceAfterTemplateKeyword: true
+SpaceBeforeAssignmentOperators: true
+SpaceBeforeCaseColon: false
+SpaceBeforeCpp11BracedList: false
+SpaceBeforeCtorInitializerColon: true
+SpaceBeforeInheritanceColon: true
+SpaceBeforeParens: ControlStatements
+SpaceBeforeRangeBasedForLoopColon: true
+SpacesBeforeTrailingComments: 1
+SpacesInAngles: Never
+SpacesInContainerLiterals: false
+SpacesInParens: Never
+SpacesInSquareBrackets: false
+
+# Include Directives Sorting
+SortIncludes: CaseSensitive
+IncludeBlocks: Regroup
+
+# Comment reflowing
+ReflowComments: true
+
+# Line breaks and packing
+BinPackArguments: false
+BinPackParameters: false
+DeriveLineEnding: true
+DerivePointerAlignment: false
+KeepEmptyLinesAtTheStartOfBlocks: false
+MaxEmptyLinesToKeep: 1
+...

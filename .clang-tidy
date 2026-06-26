@@ -1,0 +1,39 @@
+---
+# Clang-Tidy configuration file for Modern C++
+# Ref: https://clang.llvm.org/docs/clang-tidy/
+
+# Enable a comprehensive set of modern C++ checks
+Checks: >
+  -*,
+  bugprone-*,
+  clang-analyzer-*,
+  cppcoreguidelines-*,
+  modernize-*,
+  performance-*,
+  readability-*,
+  -cppcoreguidelines-pro-bounds-array-to-pointer-decay,
+  -cppcoreguidelines-pro-bounds-constant-array-index,
+  -cppcoreguidelines-pro-bounds-pointer-arithmetic,
+  -cppcoreguidelines-pro-type-reinterpret-cast,
+  -cppcoreguidelines-pro-type-vararg,
+  -cppcoreguidelines-avoid-magic-numbers,
+  -readability-magic-numbers,
+  -readability-identifier-length,
+  -readability-braces-around-statements
+
+# Apply formatting to fixes using our .clang-format
+FormatStyle: file
+
+# Analyze headers in our project
+HeaderFilterRegex: '^(Server\.h|types\.h)$'
+
+# Warnings configurations
+WarningsAsErrors: ''
+
+# Specific check options
+CheckOptions:
+  - key: modernize-use-nullptr.NullMacros
+    value: 'NULL'
+  - key: modernize-loop-convert.MinConfidence
+    value: reasonable
+...
