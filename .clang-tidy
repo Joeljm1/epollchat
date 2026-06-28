@@ -9,6 +9,7 @@ Checks: >
   clang-analyzer-*,
   cppcoreguidelines-*,
   modernize-*,
+  -modernize-use-trailing-return-type,
   performance-*,
   readability-*,
   -cppcoreguidelines-pro-bounds-array-to-pointer-decay,
@@ -19,7 +20,6 @@ Checks: >
   -cppcoreguidelines-avoid-magic-numbers,
   -readability-magic-numbers,
   -readability-identifier-length,
-  -readability-braces-around-statements
 
 # Apply formatting to fixes using our .clang-format
 FormatStyle: file
@@ -28,12 +28,12 @@ FormatStyle: file
 HeaderFilterRegex: '^(Server\.h|types\.h)$'
 
 # Warnings configurations
-WarningsAsErrors: ''
+WarningsAsErrors: ""
 
 # Specific check options
 CheckOptions:
   - key: modernize-use-nullptr.NullMacros
-    value: 'NULL'
+    value: "NULL"
   - key: modernize-loop-convert.MinConfidence
     value: reasonable
 ...

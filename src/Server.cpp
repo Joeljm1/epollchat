@@ -1,22 +1,8 @@
-#include <arpa/inet.h>
-#include <fcntl.h>
-#include <netdb.h>
-#include <netinet/in.h>
-#include <stdexcept>
-#include <sys/epoll.h>
-#include <sys/socket.h>
-#include <sys/types.h>
-#include <system_error>
-#include <unistd.h>
-
-#include <csignal>
-#include <cstring>
 
 #include "Server.h"
 
 namespace Server {
 
-constexpr const char* PORT = "12345";
 
 Server::Server(std::string&& host, u64 port)
     : port_(port), host_(std::move(host)) {}
@@ -43,7 +29,7 @@ void Server::setupListener() {
   hints.ai_flags = AI_PASSIVE;
 
   std::string port_str = std::to_string(port_);
-  const char* host =host_.empty()?nullptr:host_.c_str();
+  const char* host = host_.empty() ? nullptr : host_.c_str();
   int rv = getaddrinfo(nullptr, port_str.c_str(), &hints, &res);
   if (rv != 0) {
     throw std::runtime_error(std::string("Address resolution failed: ") +
@@ -64,8 +50,8 @@ void Server::setupListener() {
     }
     break;
   }
-  
-  if(res!=nullptr){
+
+  if (res != nullptr) {
     freeaddrinfo(res);
   }
 
@@ -80,7 +66,6 @@ void Server::setupListener() {
     throw std::system_error(errno, std::generic_category(), "Listen error");
   }
 
-
   epoll_fd_ = epoll_create1(EPOLL_CLOEXEC);
   if (epoll_fd_ < 0) {
     throw std::system_error(errno, std::generic_category(),
@@ -92,6 +77,34 @@ void Server::setupListener() {
   if (epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, listen_fd_, &event) < 0) {
     throw std::system_error(errno, std::generic_category(),
                             "epoll_ctl listen add failed");
+  }
+}
+
+void Server::run_event_loop() {
+  std::vector<epoll_event> events(MaxEvents);
+  while (true) {
+    const int ready = epoll_wait(epoll_fd_, events.data(), MaxEvents, -1);
+    if (ready < 0) {
+      throw std::system_error(errno, std::generic_category(),
+                              "epoll_wait failed");
+    }
+    for (int i = 0; i < ready; i++) {
+      const i32 fd = events[i].data.fd;
+      const u32 flags = events[i].events;
+      if (fd == listen_fd_) {
+        accept_client(fd);
+        // Check for errors or hang-ups or closed
+      } else if ((flags & (EPOLLHUP | EPOLLERR | EPOLLRDHUP)) != 0) {
+        std::cout << "Client disconnected (HUP/ERR)\n";
+        close_conn(fd);
+      } else if ((flags & EPOLLIN) != 0) {
+        handle_read(fd);
+      } else if ( true/* check if client fd*/ &&(flags & EPOLLOUT) != 0) {
+        handle_write(fd);
+      } else {
+        std::cerr << "Unknown epoll flag\n";
+      }
+    }
   }
 }
 
