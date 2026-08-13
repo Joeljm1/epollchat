@@ -1,4 +1,4 @@
-add_executable(compiler
+add_executable(epoll_chat
   main.cpp
   Server.cpp
 )

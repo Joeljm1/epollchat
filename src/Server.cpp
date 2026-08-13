@@ -1,5 +1,6 @@
 
 #include <sys/epoll.h>
+#include <sys/socket.h>
 #include <sys/types.h>
 
 #include <algorithm>
@@ -13,12 +14,13 @@ Server::Server(std::string&& host, u64 port)
     : port_(port), host_(std::move(host)) {}
 
 Server::~Server() {
-  // TODO:
+  // TODO:Add cleanup logic to close listen_fd_ and epoll_fd_
 }
 
 void Server::run() {
   signal(SIGPIPE, SIG_IGN);
   setupListener();
+  run_event_loop();
   // TODO:
 }
 void Server::setupListener() {
@@ -107,11 +109,12 @@ void Server::run_event_loop() {
       } else if (clients_.contains(fd) && (flags & EPOLLOUT) != 0) {
         handle_write(fd);
       } else {
-        std::cerr << "Unknown epoll flag\n";
+        Err("Unknown epoll flag");
       }
     }
   }
 }
+
 void Server::accept_client() {
   struct sockaddr_storage storage{};
   socklen_t sock_len = sizeof storage;
@@ -132,13 +135,48 @@ void Server::accept_client() {
     };
     event.data.fd = client_fd;
     if (epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, client_fd, &event) < 0) {
-      std::cerr << "epoll add client failed\n";
+      Err("epoll add client failed\n");
       epoll_ctl(epoll_fd_, EPOLL_CTL_DEL, client_fd, nullptr);
       close(client_fd);
+      continue;
       // TODO: broadcast this to others in default room
     }
     auto client = std::make_unique<Client>(client_fd);
     clients_.emplace(client_fd, std::move(client));
+  }
+}
+
+void Server::handle_write(i32 fd) {
+  auto client_it = clients_.find(fd);
+  if (client_it == clients_.end()) {
+    return;
+  }
+  std::queue<std::string>& queue = client_it->second->queue;
+  while (!queue.empty()) {
+    std::string& top_msg = queue.front();
+    ssize_t bytes = send(fd, top_msg.c_str(), top_msg.size(), MSG_NOSIGNAL);
+    if (static_cast<size_t>(bytes) == top_msg.size()) {  // top msg fully send
+      queue.pop();
+    } else if (bytes > 0) {  // top msg partially send
+      top_msg.erase(0, bytes);
+    } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
+      break;  // kerna; buffer is full i think so wait for next EPOLLOUT
+    } else if (bytes < 0) {
+      close_conn(fd);
+      return;
+    } else {
+      Err("Unknown case");
+      return;
+    }
+  }
+
+  if (queue.empty()) {
+    // TODO: verify flags
+    epoll_event event{.events = EPOLLIN | EPOLLRDHUP, .data{}};
+    event.data.fd = fd;
+    if (epoll_ctl(epoll_fd_, EPOLL_CTL_MOD, fd, &event) < 0) {
+      close_conn(fd);
+    }
   }
 }
 
@@ -175,14 +213,20 @@ void Server::accept_client() {
 //     room->second.broadcast(it->second->read_buffer_.c_str(), size);
 //   }
 // }
+
+// handle_read reads the msg from kernal buffer for epoll and broadcasts the msg
+// here each line (ie till '\n') is broadcasted seperatly as multiple msgs could
+// be held togeather by the kernal
 void Server::handle_read(i32 fd) {
   auto it = clients_.find(fd);
   if (it == clients_.end()) {
+    Err("Client does not exist");
     return;
   }
-  auto& client = it->second;
+  // Client& client = *it->second; not sure  if i want to do this instead
+  Client* client = it->second.get();
   auto& buff = client->read_buff;
-  std::string& write_buff = client->read_buffer_;
+  std::string write_buff;
   while (true) {
     i64 bytes = recv(fd, buff.data(), buff.size(), 0);
     if (bytes == 0) {
@@ -202,7 +246,7 @@ void Server::handle_read(i32 fd) {
   u64 pos = 0;
   i32 room_id = client->currRoom;
   auto room_it = rooms.find(room_id);
-  if(room_it==rooms.end()){
+  if (room_it == rooms.end()) {
     return;
   }
   Room& room = room_it->second;
@@ -211,14 +255,29 @@ void Server::handle_read(i32 fd) {
   std::string broadcast_msg = client->username + " : ";
   while ((pos = view.find('\n')) != std::string::npos) {
     auto sub_str = view.substr(0, pos);
-    if(!sub_str.empty() && sub_str.back()=='\r'){
+    if (!sub_str.empty() && sub_str.back() == '\r') {
       sub_str.remove_suffix(1);
     }
     msg.clear();
     msg.append(broadcast_msg);
     msg.append(sub_str);
-    room.broadcast((msg));
+    msg.push_back('\n');
+    room.broadcast(msg, get_client_map(), epoll_fd_);
+    view.remove_prefix(pos + 1);
   }
+}
+
+void Server::close_conn(i32 fd) {
+  auto it = clients_.find(fd);
+  if (it == clients_.end()) {
+    return;
+  }
+  for (auto& [_, room] : rooms) {
+    room.remove_client(fd);
+  }
+  clients_.erase(it);
+  epoll_ctl(epoll_fd_, EPOLL_CTL_DEL, fd, nullptr);
+  close(fd);
 }
 
 }  // namespace Server

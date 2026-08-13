@@ -1,9 +1,9 @@
 cmake_minimum_required(VERSION 3.22)
 
 project(
-  compiler
+  epoll_chat
   VERSION "0.0.1"
-  DESCRIPTION "My compiler"
+  DESCRIPTION "epoll chat server"
   LANGUAGES C CXX
 )
 
