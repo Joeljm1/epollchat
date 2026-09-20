@@ -38,6 +38,7 @@ struct Client {
   int fd;
   std::string username = "(Anonynous)";
   std::array<char, 4096> read_buff{};
+  std::string msg_buffer;
   i32 currRoom = 0;
   std::queue<std::string> queue;
 
@@ -67,25 +68,33 @@ class Room {
 
   // TODO: some other way for the passing of map
   void broadcast(
-      std::string msg,
+      const std::string& msg,
       const std::unordered_map<i32, std::unique_ptr<Client>>& clients_map,
-      i32 epoll_fd) {
+      i32 epoll_fd, i32 sender_fd = -1) {
     // TODO: modify epoll behaviour for sock for EPOLLOUT and then send to queue
-    for (int client_id : clients_) {
+
+    // for (int client_id : clients_) {
+    for (auto it = clients_.begin(); it != clients_.end();) {
+      int client_id = *it;
       auto client_it = clients_map.find(client_id);
       if (client_it == clients_map.end()) {
-        clients_.erase(client_id);
+        it = clients_.erase(it);
         continue;
       }
-      epoll_event event{.events = EPOLLIN | EPOLLOUT | EPOLLET};
+      it++;
+
+      epoll_event event{.events = EPOLLIN | EPOLLOUT, .data{}};
       event.data.fd = client_id;
 
       Client* client = client_it->second.get();
-      client->queue.push(std::move(msg));
-      if (epoll_ctl(epoll_fd, EPOLL_CTL_MOD, client_id, &event) < 0) {
-        std::cerr << "epoll send msg to client failed\n";
-        epoll_ctl(epoll_fd, EPOLL_CTL_DEL, client_id, nullptr);
-        close(client_id);
+      if (client->fd != sender_fd) {
+        client->queue.push(msg);
+        if (epoll_ctl(epoll_fd, EPOLL_CTL_MOD, client_id, &event) < 0) {
+          std::cerr << "epoll send msg to client failed\n";
+          epoll_ctl(epoll_fd, EPOLL_CTL_DEL, client_id, nullptr);
+          // TODO: removce client_id from clients and rooms as well
+          close(client_id);
+        }
       }
     }
   }
@@ -101,9 +110,9 @@ class Server {
   ~Server();
 
   Server(const Server&) = delete;
-  Server(const Server&&) = delete;
+  Server(Server&&) = delete;
   auto operator=(const Server&) -> Server& = delete;
-  auto operator=(const Server&&) -> Server& = delete;
+  auto operator=(Server&&) -> Server& = delete;
   const std::unordered_map<i32, std::unique_ptr<Client>>& get_client_map()
       const {
     return clients_;
@@ -119,7 +128,7 @@ class Server {
   std::unordered_map<i32, std::unique_ptr<Client>> clients_;  // fd to clients
 
   std::unordered_map<i32, Room> rooms = {
-      {0, Room(-1, "default")}};  // room name ->set of clients
+      {0, Room(-1, "default")}};  // room no ->set of clients
 
   void setupListener();
 

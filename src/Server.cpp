@@ -1,9 +1,9 @@
-
 #include <sys/epoll.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <memory>
 
 #include "Server.h"
@@ -11,12 +11,29 @@
 namespace Server {
 
 Server::Server(std::string&& host, u64 port)
-    : port_(port), host_(std::move(host)) {}
+    : host_(std::move(host)), port_(port) {}
 
 Server::~Server() {
   // TODO:Add cleanup logic to close listen_fd_ and epoll_fd_
+  for (const auto& [fd, client] : clients_) {
+    close(fd);
+  }
+  clients_.clear();
+
+  // 2. Close the listening socket
+  if (listen_fd_ >= 0) {
+    close(listen_fd_);
+    listen_fd_ = -1;
+  }
+
+  // 3. Close the epoll instance
+  if (epoll_fd_ >= 0) {
+    close(epoll_fd_);
+    epoll_fd_ = -1;
+  }
 }
 
+//TODO: add stdout to epoll ot so i can get cmds liek exit and all
 void Server::run() {
   signal(SIGPIPE, SIG_IGN);
   setupListener();
@@ -36,7 +53,7 @@ void Server::setupListener() {
 
   std::string port_str = std::to_string(port_);
   const char* host = host_.empty() ? nullptr : host_.c_str();
-  int rv = getaddrinfo(nullptr, port_str.c_str(), &hints, &res);
+  int rv = getaddrinfo(host, port_str.c_str(), &hints, &res);
   if (rv != 0) {
     throw std::runtime_error(std::string("Address resolution failed: ") +
                              gai_strerror(rv));
@@ -92,6 +109,9 @@ void Server::run_event_loop() {
     const int ready = epoll_wait(epoll_fd_, events.data(),
                                  static_cast<int>(events.size()), -1);
     if (ready < 0) {
+      if (errno == EINTR) {  // some posix signal arrived
+        continue;
+      }
       throw std::system_error(errno, std::generic_category(),
                               "epoll_wait failed");
     }
@@ -100,16 +120,20 @@ void Server::run_event_loop() {
       const u32 flags = events[i].events;
       if (fd == listen_fd_) {
         accept_client();
+        continue;
         // Check for errors or hang-ups or closed
-      } else if ((flags & (EPOLLHUP | EPOLLERR | EPOLLRDHUP)) != 0) {
-        std::cout << "Client disconnected (HUP/ERR)\n";
-        close_conn(fd);
       } else if ((flags & EPOLLIN) != 0) {
         handle_read(fd);
-      } else if (clients_.contains(fd) && (flags & EPOLLOUT) != 0) {
+      }
+      if (!clients_.contains(fd)) {
+        continue;
+      }
+      if ((flags & EPOLLOUT) != 0) {
         handle_write(fd);
-      } else {
-        Err("Unknown epoll flag");
+      }
+      if ((flags & (EPOLLHUP | EPOLLERR | EPOLLRDHUP)) != 0) {
+        std::cout << "Client disconnected (HUP/ERR)\n";
+        close_conn(fd);
       }
     }
   }
@@ -117,8 +141,8 @@ void Server::run_event_loop() {
 
 void Server::accept_client() {
   struct sockaddr_storage storage{};
-  socklen_t sock_len = sizeof storage;
   while (true) {
+    socklen_t sock_len = sizeof storage;
     int client_fd = accept4(listen_fd_, reinterpret_cast<sockaddr*>(&storage),
                             &sock_len, SOCK_NONBLOCK | SOCK_CLOEXEC);
 
@@ -130,18 +154,18 @@ void Server::accept_client() {
       std::cerr << "accept failed: " << std::strerror(errno) << '\n';
       return;
     }
-    epoll_event event{
-        .events = EPOLLIN | EPOLLRDHUP,
-    };
+    epoll_event event{.events = EPOLLIN | EPOLLRDHUP, .data = {}};
     event.data.fd = client_fd;
     if (epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, client_fd, &event) < 0) {
       Err("epoll add client failed\n");
-      epoll_ctl(epoll_fd_, EPOLL_CTL_DEL, client_fd, nullptr);
+      epoll_ctl(epoll_fd_, EPOLL_CTL_DEL, client_fd,
+                nullptr);  // TODO: is this needed if adding failed
       close(client_fd);
       continue;
       // TODO: broadcast this to others in default room
     }
     auto client = std::make_unique<Client>(client_fd);
+    rooms.at(0).add_client(client_fd);
     clients_.emplace(client_fd, std::move(client));
   }
 }
@@ -226,18 +250,18 @@ void Server::handle_read(i32 fd) {
   // Client& client = *it->second; not sure  if i want to do this instead
   Client* client = it->second.get();
   auto& buff = client->read_buff;
-  std::string write_buff;
+  std::string& write_buff = client->msg_buffer;
   while (true) {
     i64 bytes = recv(fd, buff.data(), buff.size(), 0);
     if (bytes == 0) {
       close_conn(fd);
       return;
     }
-    if (errno == EAGAIN || errno == EWOULDBLOCK) {
-      break;
-    }
+    // this should be before errno check to avoid stale old errno
     if (bytes > 0) {
       write_buff.append(buff.data(), bytes);
+    } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
+      break;
     } else {
       close_conn(fd);
       return;
@@ -250,6 +274,7 @@ void Server::handle_read(i32 fd) {
     return;
   }
   Room& room = room_it->second;
+  // TODO: move below logic to bradcast or some other fn tha calls broadcast
   std::string_view view = write_buff;
   std::string msg;
   std::string broadcast_msg = client->username + " : ";
@@ -262,9 +287,10 @@ void Server::handle_read(i32 fd) {
     msg.append(broadcast_msg);
     msg.append(sub_str);
     msg.push_back('\n');
-    room.broadcast(msg, get_client_map(), epoll_fd_);
+    room.broadcast(msg, get_client_map(), epoll_fd_, fd);
     view.remove_prefix(pos + 1);
   }
+  write_buff.erase(0, write_buff.size() - view.size());
 }
 
 void Server::close_conn(i32 fd) {
@@ -276,7 +302,9 @@ void Server::close_conn(i32 fd) {
     room.remove_client(fd);
   }
   clients_.erase(it);
-  epoll_ctl(epoll_fd_, EPOLL_CTL_DEL, fd, nullptr);
+  if (epoll_ctl(epoll_fd_, EPOLL_CTL_DEL, fd, nullptr) < 0) {
+    Err("epoll)ctl failed to delete");
+  }
   close(fd);
 }
 
